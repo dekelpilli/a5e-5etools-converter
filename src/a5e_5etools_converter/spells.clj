@@ -95,11 +95,14 @@
                                   "{@dice $1}")
                                 (str/replace #"(?i)(blinded|charmed|deafened|exhaustion|frightened|grappled|incapacitated|invisible|paralyzed|petrified|poisoned|prone|rattled|restrained|slowed|stunned|unconscious)"
                                              (comp #(str "{@condition " % "}")
-                                                   #(cond-> (get {"paralyzed"     (str "staggered|" u/source-id)
-                                                                  "stunned"       (str "debilitated|" u/source-id)
-                                                                  "incapacitated" (str "dazed|" u/source-id)
-                                                                  "slowed"        (str "slowed|" u/source-id)}
-                                                                 (str/lower-case %) %)
+                                                   #(cond-> (if-let [custom-condition
+                                                                     (get
+                                                                       {"paralyzed"     "staggered"
+                                                                        "stunned"       "debilitated"
+                                                                        "incapacitated" "dazed"
+                                                                        "slowed"        "slowed"} %)]
+                                                              (str custom-condition "|" u/source-id)
+                                                              %)
                                                             (re-matches #"^[A-Z].*" %) (str/capitalize))
                                                    first)))]
                 (if (re-matches #"[^.]+[\.:]" current)
