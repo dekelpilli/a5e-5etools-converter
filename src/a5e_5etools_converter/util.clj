@@ -3,6 +3,8 @@
   (:import (java.util.concurrent TimeUnit)
            (java.util Date)))
 
+(def source-id "LevelUpAdventurersGuideA5E")
+
 (defn ->num [s]
   (try
     (let [n (edn/read-string s)]
@@ -12,9 +14,9 @@
 (defn idx-in-bounds? [idx coll]
   (<= idx (dec (count coll))))
 
-(defn- source-meta []
+(defn source-meta []
   (let [now (->> (Date.) (inst-ms) (.toSeconds TimeUnit/MILLISECONDS))]
-    {:sources          [{:json         "LevelUpAdventurersGuideA5E"
+    {:sources          [{:json         source-id
                          :abbreviation "A5E"
                          :full         "Level Up: Adventurers Guide (A5E)"
                          :url          "https://www.levelup5e.com/"
