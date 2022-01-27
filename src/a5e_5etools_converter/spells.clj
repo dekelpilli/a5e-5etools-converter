@@ -93,12 +93,13 @@
                                 (str/replace
                                   #"(([1-9]\d*)?[Dd][1-9]\d* ?[+-] ?[0-9]\d*)"
                                   "{@dice $1}")
-                                (str/replace #"(?i)(blinded|charmed|deafened|exhaustion|frightened|grappled|incapacitated|invisible|paralyzed|petrified|poisoned|prone|rattled|restrained|stunned|unconscious)"
-                                             (comp #(str "@{condition " % "}")
-                                                   #(cond-> (get {"paralyzed"     "staggered"
-                                                                  "stunned"       "debilitated"
-                                                                  "incapacitated" "dazed"}
-                                                                 % %)
+                                (str/replace #"(?i)(blinded|charmed|deafened|exhaustion|frightened|grappled|incapacitated|invisible|paralyzed|petrified|poisoned|prone|rattled|restrained|slowed|stunned|unconscious)"
+                                             (comp #(str "{@condition " % "}")
+                                                   #(cond-> (get {"paralyzed"     (str "staggered|" u/source-id)
+                                                                  "stunned"       (str "debilitated|" u/source-id)
+                                                                  "incapacitated" (str "dazed|" u/source-id)
+                                                                  "slowed"        (str "slowed|" u/source-id)}
+                                                                 (str/lower-case %) %)
                                                             (re-matches #"^[A-Z].*" %) (str/capitalize))
                                                    first)))]
                 (if (re-matches #"[^.]+[\.:]" current)
@@ -112,6 +113,7 @@
                            (seq entry-lines) (conj entry-lines))
                    (mapv #(str/join \space %)))))
           (str/includes? content "TABLE") (conj "<<<ADD TABLE MANUALLY>>>")
+          (str/includes? content "STR DEX") (conj "<<<ADD STAT BLOCK MANUALLY>>>")
           (str/includes? content "•") (conj "<<<FIX LIST MANUALLY>>>")))
 
 (defn range-sections->range [range-sections]
