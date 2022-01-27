@@ -91,7 +91,7 @@
               (let [current (-> current
                                 (str/trim)
                                 (str/replace
-                                  #"(([1-9]\d*)?[Dd][1-9]\d*)" ;TODO include d + numeric literal? e.g. 1d4 + 1 in Time Stop
+                                  #"(([1-9]\d*)?[Dd][1-9]\d* ?[+-] ?[0-9]\d*)"
                                   "{@dice $1}")
                                 (str/replace #"(?i)(blinded|charmed|deafened|exhaustion|frightened|grappled|incapacitated|invisible|paralyzed|petrified|poisoned|prone|rattled|restrained|stunned|unconscious)"
                                              (comp #(str "@{condition " % "}")
