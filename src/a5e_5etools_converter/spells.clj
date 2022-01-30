@@ -91,7 +91,7 @@
               (let [current (-> current
                                 (str/trim)
                                 (str/replace
-                                  #"(([1-9]\d*)?[Dd][1-9]\d* ?[+-] ?[0-9]\d*)"
+                                  #"(([1-9]\d*)?[Dd][1-9]\d*?( [+-] ?[0-9]\d*)?)"
                                   "{@dice $1}")
                                 (str/replace #"(?i)(blinded|charmed|deafened|exhaustion|frightened|grappled|incapacitated|invisible|paralyzed|petrified|poisoned|prone|rattled|restrained|slowed|stunned|unconscious)"
                                              (comp #(str "{@condition " % "}")
@@ -100,6 +100,7 @@
                                                                        {"paralyzed"     "staggered"
                                                                         "stunned"       "debilitated"
                                                                         "incapacitated" "dazed"
+                                                                        "rattled"       "rattled"
                                                                         "slowed"        "slowed"} %)]
                                                               (str custom-condition "|" u/source-id)
                                                               %)
@@ -143,224 +144,247 @@
                                                     (subs (+ 2 (count section-name)))
                                                     (str/escape {\newline \space}))]})
 
-(defn extract-spell-sections [spell-lines]
-  (loop [spell {:name    (first spell-lines)
-                :page    497 ;spell page start, don't care about specifics
-                :source  u/source-id
-                :entries []}
-         section :level
-         unparsed-lines (rest spell-lines)]
-    (case section
-      :level (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                     (starts-with-pred "Classes: "))
-                   [level level-suffix] (str/split content #" \(" 2)
-                   [school types] (str/split level-suffix #";" 2)
-                   types (->sanitised-list types)]
-               (recur
-                 (assoc spell :level (->level level)
-                              :subschools types
-                              :school (->school school))
-                 :classes
-                 lines))
-      :classes (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                       (starts-with-pred "Casting Time: "))
-                     classes (-> content
-                                 (subs (count "Classes: "))
-                                 (->sanitised-list))]
-                 (recur (assoc spell :classes {:fromClassList (map (fn [class] {:name   (str/capitalize class)
-                                                                                :source u/source-id}) classes)})
-                        :casting-time
-                        lines))
-      :casting-time (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                            (starts-with-pred
-                                                                              "Range: "
-                                                                              "Target: "
-                                                                              "Area: "
-                                                                              "Components: "))
-                          [number raw-unit other] (-> (subs content (count "Casting Time: "))
-                                                      (str/split #"\s" 3))
-                          normalised-unit (->unit raw-unit)
-                          amount (cond-> (u/->num number)
-                                         (= "week" normalised-unit) (* 168))
-                          unit (get {"week" "hour"} normalised-unit normalised-unit)]
-                      (recur
-                        (-> spell
-                            (assoc :time [{:number amount
-                                           :unit   unit}])
-                            (cond->
-                              (and other
-                                   (str/includes? (str/lower-case other) "ritual")) (assoc-in [:meta :ritual] true)))
-                        :range
-                        lines))
-      :range (let [has-range? (str/starts-with? (first unparsed-lines) "Range: ")
-                   [distance lines] (if has-range?
-                                      (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                                              (starts-with-pred
-                                                                                                "Target: "
-                                                                                                "Area: "
-                                                                                                "Components: "))
-                                            range-sections (-> content
-                                                               (subs (count "Range: "))
-                                                               (str/lower-case)
-                                                               (str/replace #"short|medium|long|\(|\)" "")
-                                                               (str/trim)
-                                                               (str/split #"\-| "))]
-                                        [(range-sections->range range-sections) lines])
-                                      [{:type "special"} unparsed-lines])]
-               (recur
-                 (-> spell
-                     (assoc-in [:range :type] "point") ;inaccurate, don't care
-                     (assoc-in [:range :distance] distance))
-                 :target
-                 lines))
-      :target (if (str/starts-with? (first unparsed-lines) "Target: ")
-                (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                        (starts-with-pred "Area: "
+(defn extract-spell-sections [manual-data spell-lines]
+  (let [spell-name (first spell-lines)
+        {:keys [entries entriesHigherLevel]} (get manual-data spell-name)
+        spell (loop [spell {:name    spell-name
+                            :page    497 ;spell page start, don't care about specifics
+                            :source  u/source-id
+                            :entries []}
+                     section :level
+                     unparsed-lines (rest spell-lines)]
+                (case section
+                  :level (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
+                                                                                 (starts-with-pred "Classes: "))
+                               [level level-suffix] (str/split content #" \(" 2)
+                               [school types] (str/split level-suffix #";" 2)
+                               types (->sanitised-list types)]
+                           (recur
+                             (assoc spell :level (->level level)
+                                          :subschools types
+                                          :school (->school school))
+                             :classes
+                             lines))
+                  :classes (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
+                                                                                   (starts-with-pred "Casting Time: "))
+                                 classes (-> content
+                                             (subs (count "Classes: "))
+                                             (->sanitised-list))]
+                             (recur (assoc spell :classes {:fromClassList (map (fn [class] {:name   (str/capitalize class)
+                                                                                            :source u/source-id}) classes)})
+                                    :casting-time
+                                    lines))
+                  :casting-time (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
+                                                                                        (starts-with-pred
+                                                                                          "Range: "
+                                                                                          "Target: "
+                                                                                          "Area: "
                                                                                           "Components: "))
-                      target (extract-pseudo-section-entries content "Target")]
-                  (recur
-                    (update spell :entries #(conj % target))
-                    :area lines))
-                (recur spell :area unparsed-lines))
-      :area (if (str/starts-with? (first unparsed-lines) "Area: ")
-              (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                      (starts-with-pred "Components: "))
-                    area (extract-pseudo-section-entries content "Area")
-                    area-words (-> area
-                                   (:entries)
-                                   (first)
-                                   (str/lower-case)
-                                   (str/replace #"\(|\)|\," "")
-                                   (str/trim)
-                                   (str/split #"\-| ")
-                                   (set))
-                    matched-words (set/intersection #{"cube" "hemisphere" "line" "cone" "square"
-                                                      "circle" "sphere" "wall" "cylinder"}
-                                                    area-words)
-                    area-tags (map {"cube"       "C"
-                                    "hemisphere" "H"
-                                    "line"       "L"
-                                    "cone"       "N"
-                                    "square"     "Q"
-                                    "circle"     "R"
-                                    "sphere"     "S"
-                                    "wall"       "W"
-                                    "cylinder"   "Y"} matched-words)]
-                (recur
-                  (-> spell
-                      (update :entries #(conj % area))
-                      (assoc :areaTags area-tags))
-                  :components lines))
-              (recur spell :components unparsed-lines))
-      :components (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                          (starts-with-pred "Duration: "))
-                        raw-components (-> content
-                                           (subs (count "Components: "))
-                                           (str/escape {\newline \space})
-                                           (str/split #"," 3))
-                        components (->> raw-components
-                                        (map (comp #(str/split % #" " 2) str/trim))
-                                        (into {} (map (fn [[component text]] [(str/lower-case component)
-                                                                              (if text
-                                                                                {:text (-> text
-                                                                                           (str/escape {\( ""
-                                                                                                        \) ""})
-                                                                                           (str/trim))}
-                                                                                true)]))))]
-                    (recur
-                      (assoc spell :components components)
-                      :duration
-                      lines))
-      :duration (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                        (some-fn (starts-with-pred "Saving Throw: ")
-                                                                                 #(re-matches #"^[A-Z].*" %)))
-                      duration-text (-> content
-                                        (subs (count "Duration: "))
-                                        (str/escape {\newline \space})
-                                        (str/trim))
-                      duration-text-lower (str/lower-case duration-text) ;inconsistent casing in pdf
-                      duration (cond
-                                 (str/starts-with? duration-text-lower "until")
-                                 {:type "permanent"
-                                  :ends (cond-> []
-                                                (str/includes? duration-text-lower "dispelled") (conj "dispel")
-                                                (str/includes? duration-text-lower "trigger") (conj "trigger"))}
-                                 (= duration-text-lower "instantaneous") {:type "instant"}
-                                 (#{"varies" "special"} duration-text-lower) {:type "special"}
-                                 :else (let [concentration? (str/starts-with? duration-text "Concentration ")
-                                             [amount raw-unit] (-> duration-text
-                                                                   (cond->
-                                                                     concentration? (-> (subs (count "Concentration: "))
-                                                                                        (str/escape {\( ""
-                                                                                                     \) ""})))
-                                                                   (str/trim)
-                                                                   (str/split #" "))
-                                             special? (= amount "special")]
-                                         (cond-> {:type (if special? "special" "timed")}
-                                                 (not special?) (assoc :duration {:type   (->unit raw-unit)
-                                                                                  :amount (u/->num amount)})
-                                                 concentration? (assoc :concentration true))))]
-                  (recur (assoc spell :duration [duration])
-                         :saving-throw
-                         lines))
-      :saving-throw (if (str/starts-with? (first unparsed-lines) "Saving Throw: ")
-                      (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                              #(re-matches #"^[A-Z].*" %))
-                            saving-throw (extract-pseudo-section-entries content "Saving Throw")
-                            types (->> (str/split content #"\s")
-                                       (map #{"strength" "dexterity" "constitution" "intelligence" "wisdom" "charisma"})
-                                       (filter identity)
-                                       (distinct))]
-                        (recur
-                          (-> spell
-                              (update :entries #(conj % saving-throw))
-                              (assoc :savingThrow types))
-                          :entries lines))
-                      (recur spell :entries unparsed-lines))
-      :entries (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                       (starts-with-pred "Cast at Higher Levels. "
-                                                                                         "Rare: "))]
-                 (recur
-                   (update spell :entries #(into % (raw-content->entries content)))
-                   :higher-levels
-                   lines))
-      :higher-levels (if (and
-                           (seq unparsed-lines)
-                           (str/starts-with? (first unparsed-lines)
-                                             "Cast at Higher Levels. "))
-                       (let [{:keys [content lines]} (merge-until-next-section unparsed-lines (starts-with-pred "Rare: "))
-                             entries (-> content
-                                         (subs (count "Cast at Higher Levels. "))
-                                         (raw-content->entries))]
-                         (recur
-                           (assoc spell :entriesHigherLevel
-                                        [{:type    "entries"
-                                          :name    "Cast at Higher Levels"
-                                          :entries entries}])
-                           :rare
-                           lines))
-                       (recur spell :rare unparsed-lines))
-      :rare (if (seq unparsed-lines)
-              (let [{:keys [content lines]} (merge-until-next-section unparsed-lines (starts-with-pred "Rare: "))
-                    entries (-> content
-                                (subs (count "Rare: "))
-                                (raw-content->entries))]
-                (recur
-                  (update spell :entries #(conj % {:type    "entries" :name "Rare"
-                                                   :entries entries}))
-                  :rare lines))
-              spell))))
+                                      [number raw-unit other] (-> (subs content (count "Casting Time: "))
+                                                                  (str/split #"\s" 3))
+                                      normalised-unit (->unit raw-unit)
+                                      amount (cond-> (u/->num number)
+                                                     (= "week" normalised-unit) (* 168))
+                                      unit (get {"week" "hour"} normalised-unit normalised-unit)]
+                                  (recur
+                                    (-> spell
+                                        (assoc :time [{:number amount
+                                                       :unit   unit}])
+                                        (cond->
+                                          (and other
+                                               (str/includes? (str/lower-case other) "ritual")) (assoc-in [:meta :ritual] true)))
+                                    :range
+                                    lines))
+                  :range (let [has-range? (str/starts-with? (first unparsed-lines) "Range: ")
+                               [distance lines] (if has-range?
+                                                  (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
+                                                                                                          (starts-with-pred
+                                                                                                            "Target: "
+                                                                                                            "Area: "
+                                                                                                            "Components: "))
+                                                        range-sections (-> content
+                                                                           (subs (count "Range: "))
+                                                                           (str/lower-case)
+                                                                           (str/replace #"short|medium|long|\(|\)" "")
+                                                                           (str/trim)
+                                                                           (str/split #"\-| "))]
+                                                    [(range-sections->range range-sections) lines])
+                                                  [{:type "special"} unparsed-lines])]
+                           (recur
+                             (-> spell
+                                 (assoc-in [:range :type] "point") ;inaccurate, don't care
+                                 (assoc-in [:range :distance] distance))
+                             :target
+                             lines))
+                  :target (if (str/starts-with? (first unparsed-lines) "Target: ")
+                            (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
+                                                                                    (starts-with-pred "Area: "
+                                                                                                      "Components: "))
+                                  target (extract-pseudo-section-entries content "Target")]
+                              (recur
+                                (update spell :entries #(conj % target))
+                                :area lines))
+                            (recur spell :area unparsed-lines))
+                  :area (if (str/starts-with? (first unparsed-lines) "Area: ")
+                          (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
+                                                                                  (starts-with-pred "Components: "))
+                                area (extract-pseudo-section-entries content "Area")
+                                area-words (-> area
+                                               (:entries)
+                                               (first)
+                                               (str/lower-case)
+                                               (str/replace #"\(|\)|\," "")
+                                               (str/trim)
+                                               (str/split #"\-| ")
+                                               (set))
+                                matched-words (set/intersection #{"cube" "hemisphere" "line" "cone" "square"
+                                                                  "circle" "sphere" "wall" "cylinder"}
+                                                                area-words)
+                                area-tags (map {"cube"       "C"
+                                                "hemisphere" "H"
+                                                "line"       "L"
+                                                "cone"       "N"
+                                                "square"     "Q"
+                                                "circle"     "R"
+                                                "sphere"     "S"
+                                                "wall"       "W"
+                                                "cylinder"   "Y"} matched-words)]
+                            (recur
+                              (-> spell
+                                  (update :entries #(conj % area))
+                                  (assoc :areaTags area-tags))
+                              :components lines))
+                          (recur spell :components unparsed-lines))
+                  :components (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
+                                                                                      (starts-with-pred "Duration: "))
+                                    raw-components (-> content
+                                                       (subs (count "Components: "))
+                                                       (str/escape {\newline \space})
+                                                       (str/split #"," 3))
+                                    components (->> raw-components
+                                                    (map (comp #(str/split % #" " 2) str/trim))
+                                                    (into {} (map (fn [[component text]] [(str/lower-case component)
+                                                                                          (if text
+                                                                                            {:text (-> text
+                                                                                                       (str/escape {\( ""
+                                                                                                                    \) ""})
+                                                                                                       (str/trim))}
+                                                                                            true)]))))]
+                                (recur
+                                  (assoc spell :components components)
+                                  :duration
+                                  lines))
+                  :duration (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
+                                                                                    (some-fn (starts-with-pred "Saving Throw: ")
+                                                                                             #(re-matches #"^[A-Z].*" %)))
+                                  duration-text (-> content
+                                                    (subs (count "Duration: "))
+                                                    (str/escape {\newline \space})
+                                                    (str/trim))
+                                  duration-text-lower (str/lower-case duration-text) ;inconsistent casing in pdf
+                                  duration (cond
+                                             (str/starts-with? duration-text-lower "until")
+                                             {:type "permanent"
+                                              :ends (cond-> []
+                                                            (str/includes? duration-text-lower "dispelled") (conj "dispel")
+                                                            (str/includes? duration-text-lower "trigger") (conj "trigger"))}
+                                             (= duration-text-lower "instantaneous") {:type "instant"}
+                                             (#{"varies" "special"} duration-text-lower) {:type "special"}
+                                             :else (let [concentration? (str/starts-with? duration-text "Concentration ")
+                                                         [amount raw-unit] (-> duration-text
+                                                                               (cond->
+                                                                                 concentration? (-> (subs (count "Concentration: "))
+                                                                                                    (str/escape {\( ""
+                                                                                                                 \) ""})))
+                                                                               (str/trim)
+                                                                               (str/split #" "))
+                                                         special? (= amount "special")]
+                                                     (cond-> {:type (if special? "special" "timed")}
+                                                             (not special?) (assoc :duration {:type   (->unit raw-unit)
+                                                                                              :amount (u/->num amount)})
+                                                             concentration? (assoc :concentration true))))]
+                              (recur (assoc spell :duration [duration])
+                                     :saving-throw
+                                     lines))
+                  :saving-throw (if (str/starts-with? (first unparsed-lines) "Saving Throw: ")
+                                  (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
+                                                                                          #(re-matches #"^[A-Z].*" %))
+                                        saving-throw (extract-pseudo-section-entries content "Saving Throw")
+                                        types (->> (str/split content #"\s")
+                                                   (map #{"strength" "dexterity" "constitution" "intelligence" "wisdom" "charisma"})
+                                                   (filter identity)
+                                                   (distinct))]
+                                    (recur
+                                      (-> spell
+                                          (update :entries #(conj % saving-throw))
+                                          (assoc :savingThrow types))
+                                      :entries lines))
+                                  (recur spell :entries unparsed-lines))
+                  :entries (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
+                                                                                   (starts-with-pred "Cast at Higher Levels. "
+                                                                                                     "Rare: "))]
+                             (recur
+                               (update spell :entries #(into % (raw-content->entries content)))
+                               :higher-levels
+                               lines))
+                  :higher-levels (if (and
+                                       (seq unparsed-lines)
+                                       (str/starts-with? (first unparsed-lines)
+                                                         "Cast at Higher Levels. "))
+                                   (let [{:keys [content lines]} (merge-until-next-section unparsed-lines (starts-with-pred "Rare: "))
+                                         entries (-> content
+                                                     (subs (count "Cast at Higher Levels. "))
+                                                     (raw-content->entries))]
+                                     (recur
+                                       (assoc spell :entriesHigherLevel
+                                                    [{:type    "entries"
+                                                      :name    "Cast at Higher Levels"
+                                                      :entries entries}])
+                                       :rare
+                                       lines))
+                                   (recur spell :rare unparsed-lines))
+                  :rare (if (seq unparsed-lines)
+                          (let [{:keys [content lines]} (merge-until-next-section unparsed-lines (starts-with-pred "Rare: "))
+                                entries (-> content
+                                            (subs (count "Rare: "))
+                                            (raw-content->entries))]
+                            (recur
+                              (update spell :entries #(conj % {:type    "entries" :name "Rare"
+                                                               :entries entries}))
+                              :rare lines))
+                          spell)))]
+    (-> spell
+        (update :entries (fnil identity entries))
+        (update :entriesHigherLevel (fnil identity entriesHigherLevel)))))
 
 (defn convert-spells []
-  (let [spell-lines (extract-spell-lines "data/a5e/spells/a5e-spells-touched-up.txt")]
+  (let [manual-data (try
+                      (j/read-value (File. "data/a5e/spells/manually-adjusted-spells.json"))
+                      (catch Exception _) nil)
+        spell-lines (extract-spell-lines "data/a5e/spells/a5e-spells-touched-up.txt")]
     (map #(try
-            (extract-spell-sections %)
+            (extract-spell-sections manual-data %)
             (catch Exception e
               (throw (ex-info (ex-message e) {:original %} e))))
          spell-lines)))
 
-(defn write-spells []
+(defn write-spells! []
   (.writeValue ^ObjectMapper j/keyword-keys-object-mapper
                (File. "data/5et/generated/spells.json")
                {:_meta (u/source-meta)
                 :spell (convert-spells)}))
+
+(defn save-manual-changes! []
+  (let [manual-spells #{"Animate Objects" "Augury" "Bestow Curse" "Calm Emotions" "Commune with Nature"
+                        "Conjure Animals" "Control Weather" "Creation" "Divine Word" "Druidcraft" "Find Steed"
+                        "Greater Restoration" "Guards and Wards" "Mage Hand" "Prestidigitation"
+                        "Private Sanctum" "Reincarnate" "Scrying" "Teleport" "Thaumaturgy"
+                        "Wish" "Writhing Transformation"}]
+    (->> (j/read-value (File. "data/5et/spells/spells-a5e.json")
+                       j/keyword-keys-object-mapper)
+         (:spell)
+         (filter (comp manual-spells :name))
+         (group-by :name)
+         (into {} (map (fn [[k v]] [k (-> v first (select-keys [:entries :entriesHigherLevel]))])))
+         (.writeValue ^ObjectMapper j/keyword-keys-object-mapper
+                      (File. "data/a5e/spells/manually-adjusted-spells.json")))))
