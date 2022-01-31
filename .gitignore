@@ -3,3 +3,4 @@ data
 target
 *.iml
 .nrepl-port
+.DS_Store
