@@ -6,14 +6,9 @@
   (:import (java.io File)
            (com.fasterxml.jackson.databind ObjectMapper)))
 
-(defn starts-with-pred [& prefixes]
-  (fn [s]
-    (reduce #(when (str/starts-with? s %2)
-               (reduced true)) false prefixes)))
-
-(def spell-level?
-  (starts-with-pred "Cantrip (" "1st-level (" "2nd-level (" "3rd-level (" "4th-level ("
-                    "5th-level (" "6th-level (" "7th-level (" "8th-level (" "9th-level ("))
+(def spell-level-pred
+  (u/starts-with-pred "Cantrip (", "1st-level (", "2nd-level (", "3rd-level (", "4th-level (",
+                      "5th-level (", "6th-level (", "7th-level (", "8th-level (", "9th-level ("))
 
 (def ->level {"Cantrip"   0
               "1st-level" 1
@@ -58,67 +53,11 @@
                             \)       ""}))))
 
 (defn extract-spell-lines [^String file-name]
-  (let [lines (->> (File. file-name)
-                   (slurp)
-                   (str/split-lines)
-                   (remove #(re-matches #"^(Chapter 10: Spellcasting|Adventurer’s Guide|[1-9][0-9]*)$" %))
-                   (vec))]
-    (loop [spells []
-           lines lines]
-      (let [idx (loop [spell-level-lines 0
-                       idx 0]
-                  (let [line (nth lines idx)]
-                    (if (spell-level? line)
-                      (if (zero? spell-level-lines)
-                        (recur (inc spell-level-lines) (inc idx))
-                        (dec idx))
-                      (let [new-idx (inc idx)]
-                        (if (u/idx-in-bounds? new-idx lines)
-                          (recur spell-level-lines new-idx)
-                          new-idx)))))
-            [spell lines] (split-at idx lines)]
-        (if (or (empty? lines) (empty? spell))
-          (conj spells spell)
-          (if (zero? idx)
-            (conj spells spell)
-            (recur (conj spells spell) lines)))))))
+  (u/extract-lines file-name
+                   #(re-matches #"^(Chapter 10: Spellcasting|Adventurer’s Guide|[1-9][0-9]*)$" %)
+                   spell-level-pred))
 
-(defn raw-content->entries [content]
-  (cond-> (loop [entry-lines []
-                 entries []
-                 [current & remaining] (str/split-lines content)]
-            (if current
-              (let [current (-> current
-                                (str/trim)
-                                (str/replace
-                                  #"(([1-9]\d*)?[Dd][1-9]\d*?( ?[+-] ?[0-9]\d*)?)"
-                                  "{@dice $1}")
-                                (str/replace #"(?i)(blinded|charmed|deafened|exhaustion|frightened|grappled|incapacitated|invisible|paralyzed|petrified|poisoned|prone|rattled|restrained|slowed|stunned|unconscious)"
-                                             (comp #(str "{@condition " % "}")
-                                                   #(cond-> (if-let [custom-condition
-                                                                     (get
-                                                                       {"paralyzed"     "staggered"
-                                                                        "stunned"       "debilitated"
-                                                                        "incapacitated" "dazed"
-                                                                        "rattled"       "rattled"
-                                                                        "slowed"        "slowed"} %)]
-                                                              (str custom-condition "|" u/source-id)
-                                                              %)
-                                                            (re-matches #"^[A-Z].*" %) (str/capitalize))
-                                                   first)))]
-                (if (re-matches #"[^.]+[\.:]" current)
-                  (recur []
-                         (conj entries (conj entry-lines current))
-                         remaining)
-                  (recur (conj entry-lines current)
-                         entries
-                         remaining)))
-              (->> (cond-> entries
-                           (seq entry-lines) (conj entry-lines))
-                   (mapv #(str/join \space %)))))
-          (str/includes? content "TABLE") (conj "<<<ADD TABLE MANUALLY>>>")
-          (str/includes? content "STR DEX") (conj "<<<ADD STAT BLOCK MANUALLY>>>")
-          (str/includes? content "•") (conj "<<<FIX LIST MANUALLY>>>")))
+(def raw-content->entries (comp u/lines->entries str/split-lines))
 
 (defn range-sections->range [range-sections]
   (if-let [special-type (special-range-types (first range-sections))]
@@ -155,7 +94,7 @@
                      unparsed-lines (rest spell-lines)]
                 (case section
                   :level (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                                 (starts-with-pred "Classes: "))
+                                                                                 (u/starts-with-pred "Classes: "))
                                [level level-suffix] (str/split content #" \(" 2)
                                [school types] (str/split level-suffix #";" 2)
                                types (->sanitised-list types)]
@@ -166,7 +105,7 @@
                              :classes
                              lines))
                   :classes (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                                   (starts-with-pred "Casting Time: "))
+                                                                                   (u/starts-with-pred "Casting Time: "))
                                  classes (-> content
                                              (subs (count "Classes: "))
                                              (->sanitised-list))]
@@ -175,7 +114,7 @@
                                     :casting-time
                                     lines))
                   :casting-time (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                                        (starts-with-pred
+                                                                                        (u/starts-with-pred
                                                                                           "Range: "
                                                                                           "Target: "
                                                                                           "Area: "
@@ -198,7 +137,7 @@
                   :range (let [has-range? (str/starts-with? (first unparsed-lines) "Range: ")
                                [distance lines] (if has-range?
                                                   (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                                                          (starts-with-pred
+                                                                                                          (u/starts-with-pred
                                                                                                             "Target: "
                                                                                                             "Area: "
                                                                                                             "Components: "))
@@ -218,8 +157,8 @@
                              lines))
                   :target (if (str/starts-with? (first unparsed-lines) "Target: ")
                             (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                                    (starts-with-pred "Area: "
-                                                                                                      "Components: "))
+                                                                                    (u/starts-with-pred "Area: "
+                                                                                                        "Components: "))
                                   target (extract-pseudo-section-entries content "Target")]
                               (recur
                                 (update spell :entries #(conj % target))
@@ -227,7 +166,7 @@
                             (recur spell :area unparsed-lines))
                   :area (if (str/starts-with? (first unparsed-lines) "Area: ")
                           (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                                  (starts-with-pred "Components: "))
+                                                                                  (u/starts-with-pred "Components: "))
                                 area (extract-pseudo-section-entries content "Area")
                                 area-words (-> area
                                                (:entries)
@@ -256,7 +195,7 @@
                               :components lines))
                           (recur spell :components unparsed-lines))
                   :components (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                                      (starts-with-pred "Duration: "))
+                                                                                      (u/starts-with-pred "Duration: "))
                                     raw-components (-> content
                                                        (subs (count "Components: "))
                                                        (str/escape {\newline \space})
@@ -275,7 +214,7 @@
                                   :duration
                                   lines))
                   :duration (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                                    (some-fn (starts-with-pred "Saving Throw: ")
+                                                                                    (some-fn (u/starts-with-pred "Saving Throw: ")
                                                                                              #(re-matches #"^[A-Z].*" %)))
                                   duration-text (-> content
                                                     (subs (count "Duration: "))
@@ -321,8 +260,8 @@
                                       :entries lines))
                                   (recur spell :entries unparsed-lines))
                   :entries (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                                   (starts-with-pred "Cast at Higher Levels. "
-                                                                                                     "Rare: "))]
+                                                                                   (u/starts-with-pred "Cast at Higher Levels. "
+                                                                                                       "Rare: "))]
                              (recur
                                (update spell :entries #(into % (raw-content->entries content)))
                                :higher-levels
@@ -331,7 +270,7 @@
                                        (seq unparsed-lines)
                                        (str/starts-with? (first unparsed-lines)
                                                          "Cast at Higher Levels. "))
-                                   (let [{:keys [content lines]} (merge-until-next-section unparsed-lines (starts-with-pred "Rare: "))
+                                   (let [{:keys [content lines]} (merge-until-next-section unparsed-lines (u/starts-with-pred "Rare: "))
                                          entries (-> content
                                                      (subs (count "Cast at Higher Levels. "))
                                                      (raw-content->entries))]
@@ -344,7 +283,7 @@
                                        lines))
                                    (recur spell :rare unparsed-lines))
                   :rare (if (seq unparsed-lines)
-                          (let [{:keys [content lines]} (merge-until-next-section unparsed-lines (starts-with-pred "Rare: "))
+                          (let [{:keys [content lines]} (merge-until-next-section unparsed-lines (u/starts-with-pred "Rare: "))
                                 entries (-> content
                                             (subs (count "Rare: "))
                                             (raw-content->entries))]
@@ -361,7 +300,7 @@
   (let [manual-data (try
                       (j/read-value (File. "data/a5e/spells/manually-adjusted-spells.json"))
                       (catch Exception _ nil))
-        spell-lines (extract-spell-lines "data/a5e/spells/a5e-spells-touched-up.txt")]
+        spell-lines (extract-spell-lines "data/a5e/spells/spells-touched-up.txt")]
     (map #(try
             (extract-spell-sections manual-data %)
             (catch Exception e
@@ -369,10 +308,8 @@
          spell-lines)))
 
 (defn write-spells! []
-  (.writeValue ^ObjectMapper j/keyword-keys-object-mapper
-               (File. "data/5et/generated/spells.json")
-               {:_meta (u/source-meta)
-                :spell (convert-spells)}))
+  (u/->file "data/5et/generated/a5e/spells.json" {:_meta (u/source-meta)
+                                                  :spell (convert-spells)}))
 
 (defn save-manual-changes! []
   (let [manual-spells #{"Animate Objects" "Augury" "Bestow Curse" "Calm Emotions" "Commune with Nature"
@@ -386,5 +323,4 @@
          (filter (comp manual-spells :name))
          (group-by :name)
          (into {} (map (fn [[k v]] [k (-> v first (select-keys [:entries :entriesHigherLevel]))])))
-         (.writeValue ^ObjectMapper j/keyword-keys-object-mapper
-                      (File. "data/a5e/spells/manually-adjusted-spells.json")))))
+         (u/->file "data/a5e/spells/manually-adjusted-spells.json"))))
