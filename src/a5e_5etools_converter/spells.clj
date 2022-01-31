@@ -3,8 +3,7 @@
             [jsonista.core :as j]
             [clojure.string :as str]
             [clojure.set :as set])
-  (:import (java.io File)
-           (com.fasterxml.jackson.databind ObjectMapper)))
+  (:import (java.io File)))
 
 (def spell-level-pred
   (u/starts-with-pred "Cantrip (", "1st-level (", "2nd-level (", "3rd-level (", "4th-level (",

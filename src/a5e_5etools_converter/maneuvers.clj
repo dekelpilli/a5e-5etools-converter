@@ -45,6 +45,7 @@
 
 (defn convert-maneuvers []
   (let [maneuver-lines (extract-maneuver-lines "data/a5e/maneuvers/maneuvers.txt")]
+    ;TODO add manual maneuvers
     (->> maneuver-lines
          (filter #(re-matches #".*\([1-9] point(s)?\)$" (first %)))
          (map extract-maneuver-sections))))
