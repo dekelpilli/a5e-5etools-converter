@@ -91,7 +91,7 @@
               (let [current (-> current
                                 (str/trim)
                                 (str/replace
-                                  #"(([1-9]\d*)?[Dd][1-9]\d*?( [+-] ?[0-9]\d*)?)"
+                                  #"(([1-9]\d*)?[Dd][1-9]\d*?( ?[+-] ?[0-9]\d*)?)"
                                   "{@dice $1}")
                                 (str/replace #"(?i)(blinded|charmed|deafened|exhaustion|frightened|grappled|incapacitated|invisible|paralyzed|petrified|poisoned|prone|rattled|restrained|slowed|stunned|unconscious)"
                                              (comp #(str "{@condition " % "}")
@@ -146,7 +146,7 @@
 
 (defn extract-spell-sections [manual-data spell-lines]
   (let [spell-name (first spell-lines)
-        {:keys [entries entriesHigherLevel]} (get manual-data spell-name)
+        {:strs [entries entriesHigherLevel]} (get manual-data spell-name)
         spell (loop [spell {:name    spell-name
                             :page    497 ;spell page start, don't care about specifics
                             :source  u/source-id
@@ -353,14 +353,14 @@
                                                                :entries entries}))
                               :rare lines))
                           spell)))]
-    (-> spell
-        (update :entries (fnil identity entries))
-        (update :entriesHigherLevel (fnil identity entriesHigherLevel)))))
+    (cond-> spell
+            entries (assoc :entries entries)
+            entriesHigherLevel (assoc :entriesHigherLevel entriesHigherLevel))))
 
 (defn convert-spells []
   (let [manual-data (try
                       (j/read-value (File. "data/a5e/spells/manually-adjusted-spells.json"))
-                      (catch Exception _) nil)
+                      (catch Exception _ nil))
         spell-lines (extract-spell-lines "data/a5e/spells/a5e-spells-touched-up.txt")]
     (map #(try
             (extract-spell-sections manual-data %)
