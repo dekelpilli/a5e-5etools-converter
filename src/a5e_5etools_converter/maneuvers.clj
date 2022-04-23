@@ -44,11 +44,12 @@
      :entries    entries}))
 
 (defn convert-maneuvers []
-  (let [maneuver-lines (extract-maneuver-lines "data/a5e/maneuvers/maneuvers.txt")]
-    ;TODO add manual maneuvers
+  (let [maneuver-lines (extract-maneuver-lines "data/a5e/maneuvers/maneuvers.txt")
+        manual-maneuvers (u/load-json "data/a5e/spells/manually-adjusted-maneuvers.json")]
     (->> maneuver-lines
          (filter #(re-matches #".*\([1-9] point(s)?\)$" (first %)))
-         (map extract-maneuver-sections))))
+         (map extract-maneuver-sections)
+         (into manual-maneuvers))))
 
 (defn write-maneuvers! []
   (u/->file "data/5et/generated/a5e/maneuvers.json" {:_meta (u/source-meta)

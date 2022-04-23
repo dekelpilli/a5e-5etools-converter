@@ -13,11 +13,16 @@
     (reduce #(when (str/starts-with? s %2)
                (reduced true)) false prefixes)))
 
+(defn load-json [^String file-name]
+  (try
+    (j/read-value (File. file-name))
+    (catch Exception _ nil)))
+
 (defn ->num [s]
   (try
     (let [n (edn/read-string s)]
       (when (number? n) n))
-    (catch Exception _ (println (type s)))))
+    (catch Exception _ s)))
 
 (defn- idx-in-bounds? [idx coll]
   (<= idx (dec (count coll))))

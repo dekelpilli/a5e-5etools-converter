@@ -33,7 +33,7 @@
                "transmutation" "T"})
 
 (defn ->unit [unit]
-  (let [unit (str/replace unit #"\s|,|\(|\)" "")]
+  (let [unit (str/replace unit #"\s|,|\(|\)|;" "")]
     (get {"actions"   "action"
           "reactions" "reaction"
           "rounds"    "round"
@@ -296,9 +296,7 @@
             entriesHigherLevel (assoc :entriesHigherLevel entriesHigherLevel))))
 
 (defn convert-spells []
-  (let [manual-data (try
-                      (j/read-value (File. "data/a5e/spells/manually-adjusted-spells.json"))
-                      (catch Exception _ nil))
+  (let [manual-data (u/load-json "data/a5e/spells/manually-adjusted-spells.json")
         spell-lines (extract-spell-lines "data/a5e/spells/spells-touched-up.txt")]
     (map #(try
             (extract-spell-sections manual-data %)
