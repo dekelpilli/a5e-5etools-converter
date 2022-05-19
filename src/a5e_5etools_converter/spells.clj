@@ -82,6 +82,37 @@
                                                     (subs (+ 2 (count section-name)))
                                                     (str/escape {\newline \space}))]})
 
+(defn extract-duration [duration-text]
+  (let [duration-text-lower (str/lower-case duration-text)] ;inconsistent casing in pdf
+    (cond
+      (str/starts-with? duration-text-lower "until")
+      {:type "permanent"
+       :ends (cond-> []
+                     (str/includes? duration-text-lower "dispelled") (conj "dispel")
+                     (str/includes? duration-text-lower "trigger") (conj "trigger"))}
+      (= duration-text-lower "instantaneous") {:type "instant"}
+      (#{"varies" "special"} duration-text-lower) {:type "special"}
+      :else (let [concentration? (str/starts-with? duration-text "Concentration ")
+                  duration-text-no-conc (cond-> duration-text
+                                                concentration? (-> (subs (count "Concentration: "))
+                                                                   (str/escape {\( ""
+                                                                                \) ""})))
+                  up-to? (str/starts-with? (str/lower-case duration-text-no-conc)
+                                           "up to")
+                  [amount raw-unit] (-> duration-text-no-conc
+                                        (cond-> up-to? (subs (count "Up to ")))
+                                        (str/trim)
+                                        (str/split #" "))
+                  special? (= amount "special")]
+              (cond-> {:type (cond
+                               special? "special"
+                               :else "timed")}
+                      (not special?) (assoc :duration
+                                            {:type   (->unit raw-unit)
+                                             :amount (or (parse-long amount) duration-text-no-conc)
+                                             :upTo   up-to?})
+                      concentration? (assoc :concentration true))))))
+
 (defn extract-spell-sections [manual-data spell-lines]
   (let [spell-name (first spell-lines)
         {:strs [entries entriesHigherLevel]} (get manual-data spell-name)
@@ -220,36 +251,10 @@
                                                     (subs (count "Duration: "))
                                                     (str/escape {\newline \space})
                                                     (str/trim))
-                                  duration-text-lower (str/lower-case duration-text) ;inconsistent casing in pdf
-                                  duration (cond
-                                             (str/starts-with? duration-text-lower "until")
-                                             {:type "permanent"
-                                              :ends (cond-> []
-                                                            (str/includes? duration-text-lower "dispelled") (conj "dispel")
-                                                            (str/includes? duration-text-lower "trigger") (conj "trigger"))}
-                                             (= duration-text-lower "instantaneous") {:type "instant"}
-                                             (#{"varies" "special"} duration-text-lower) {:type "special"}
-                                             :else (let [concentration? (str/starts-with? duration-text "Concentration ")
-                                                         duration-text-no-conc (cond-> duration-text
-                                                                                       concentration? (-> (subs (count "Concentration: "))
-                                                                                                          (str/escape {\( ""
-                                                                                                                       \) ""})))
-                                                         up-to? (str/starts-with? (str/lower-case duration-text-no-conc)
-                                                                                  "up to")
-                                                         [amount raw-unit] (-> duration-text-no-conc
-                                                                               (cond-> up-to? (subs (count "Up to ")))
-                                                                               (str/trim)
-                                                                               (str/split #" "))
-                                                         special? (= amount "special")]
-                                                     (cond-> {:type (cond
-                                                                      special? "special"
-                                                                      :else "timed")}
-                                                             (not special?) (assoc :duration
-                                                                                   {:type   (->unit raw-unit)
-                                                                                    :amount (or (parse-long amount) duration-text-no-conc)
-                                                                                    :upTo   up-to?})
-                                                             concentration? (assoc :concentration true))))]
-                              (recur (assoc spell :duration [duration])
+                                  duration-texts (if (str/includes? duration-text "Until dispelled")
+                                                   [duration-text]
+                                                   (str/split duration-text #" or "))]
+                              (recur (assoc spell :duration (map extract-duration duration-texts))
                                      :saving-throw
                                      lines))
                   :saving-throw (if (str/starts-with? (first unparsed-lines) "Saving Throw: ")

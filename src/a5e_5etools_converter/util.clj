@@ -64,20 +64,22 @@
                                 (str/replace
                                   #"(([1-9]\d*)?[Dd][1-9]\d*?( ?[+-] ?[0-9]\d*)?)"
                                   "{@dice $1}")
-                                (str/replace #"(?i)(blinded|charmed|deafened|exhaustion|frightened|grappled|incapacitated|invisible|paralyzed|petrified|poisoned|prone|rattled|restrained|slowed|stunned|unconscious)"
-                                             (comp #(str "{@condition " % "}")
-                                                   #(cond-> (if-let [custom-condition
-                                                                     (get
-                                                                       {"paralyzed"     "staggered"
-                                                                        "stunned"       "debilitated"
-                                                                        "incapacitated" "dazed"
-                                                                        "confused"      "confused"
-                                                                        "rattled"       "rattled"
-                                                                        "slowed"        "slowed"} %)]
-                                                              (str custom-condition "|" a5e-source-id)
-                                                              %)
-                                                            (re-matches #"^[A-Z].*" %) (str/capitalize))
-                                                   first)))]
+                                (str/replace #"(?i)(blinded|charmed|deafened|exhaustion|frightened|grappled|incapacitated|invisible|paralyzed|petrified|poisoned|prone|rattled|restrained|slowed|stunned|unconscious|confused)"
+                                             (fn [matches]
+                                               (let [condition (first matches)
+                                                     capitalised? (Character/isUpperCase ^char (first condition))]
+                                                 (-> (if-let [custom-condition
+                                                              (get
+                                                                {"paralyzed"     "staggered"
+                                                                 "stunned"       "debilitated"
+                                                                 "incapacitated" "dazed"
+                                                                 "confused"      "confused"
+                                                                 "rattled"       "rattled"
+                                                                 "slowed"        "slowed"} (str/lower-case condition))]
+                                                       (str custom-condition "|" a5e-source-id)
+                                                       condition)
+                                                     (cond-> capitalised? str/capitalize)
+                                                     (as-> $ (str "{@condition " $ "}")))))))]
                 (if (re-matches #"[^.]+[\.:]" current)
                   (recur []
                          (conj entries (conj entry-lines current))
