@@ -6,7 +6,8 @@
            (java.util Date)
            (java.io File)))
 
-(def source-id "LevelUpAdventurersGuideA5E")
+(def a5e-source-id "LevelUpAdventurersGuideA5E")
+(def phb-source-id "PHB")
 
 (defn starts-with-pred [& prefixes]
   (fn [s]
@@ -70,9 +71,10 @@
                                                                        {"paralyzed"     "staggered"
                                                                         "stunned"       "debilitated"
                                                                         "incapacitated" "dazed"
+                                                                        "confused"      "confused"
                                                                         "rattled"       "rattled"
                                                                         "slowed"        "slowed"} %)]
-                                                              (str custom-condition "|" source-id)
+                                                              (str custom-condition "|" a5e-source-id)
                                                               %)
                                                             (re-matches #"^[A-Z].*" %) (str/capitalize))
                                                    first)))]
@@ -92,7 +94,7 @@
 
 (defn source-meta []
   (let [now (->> (Date.) (inst-ms) (.toSeconds TimeUnit/MILLISECONDS))]
-    {:sources          [{:json         source-id
+    {:sources          [{:json         a5e-source-id
                          :abbreviation "A5E"
                          :full         "Level Up: Adventurers Guide (A5E)"
                          :url          "https://www.levelup5e.com/"

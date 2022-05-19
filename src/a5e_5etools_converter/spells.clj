@@ -87,7 +87,7 @@
         {:strs [entries entriesHigherLevel]} (get manual-data spell-name)
         spell (loop [spell {:name    spell-name
                             :page    497 ;spell page start, don't care about specifics
-                            :source  u/source-id
+                            :source  u/a5e-source-id
                             :entries []}
                      section :level
                      unparsed-lines (rest spell-lines)]
@@ -109,7 +109,8 @@
                                              (subs (count "Classes: "))
                                              (->sanitised-list))]
                              (recur (assoc spell :classes {:fromClassList (map (fn [class] {:name   (str/capitalize class)
-                                                                                            :source u/source-id}) classes)})
+                                                                                            :source u/phb-source-id})
+                                                                               classes)})
                                     :casting-time
                                     lines))
                   :casting-time (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
@@ -229,17 +230,24 @@
                                              (= duration-text-lower "instantaneous") {:type "instant"}
                                              (#{"varies" "special"} duration-text-lower) {:type "special"}
                                              :else (let [concentration? (str/starts-with? duration-text "Concentration ")
-                                                         [amount raw-unit] (-> duration-text
-                                                                               (cond->
-                                                                                 concentration? (-> (subs (count "Concentration: "))
-                                                                                                    (str/escape {\( ""
-                                                                                                                 \) ""})))
+                                                         duration-text-no-conc (cond-> duration-text
+                                                                                       concentration? (-> (subs (count "Concentration: "))
+                                                                                                          (str/escape {\( ""
+                                                                                                                       \) ""})))
+                                                         up-to? (str/starts-with? (str/lower-case duration-text-no-conc)
+                                                                                  "up to")
+                                                         [amount raw-unit] (-> duration-text-no-conc
+                                                                               (cond-> up-to? (subs (count "Up to ")))
                                                                                (str/trim)
                                                                                (str/split #" "))
                                                          special? (= amount "special")]
-                                                     (cond-> {:type (if special? "special" "timed")}
-                                                             (not special?) (assoc :duration {:type   (->unit raw-unit)
-                                                                                              :amount (u/->num amount)})
+                                                     (cond-> {:type (cond
+                                                                      special? "special"
+                                                                      :else "timed")}
+                                                             (not special?) (assoc :duration
+                                                                                   {:type   (->unit raw-unit)
+                                                                                    :amount (or (parse-long amount) duration-text-no-conc)
+                                                                                    :upTo   up-to?})
                                                              concentration? (assoc :concentration true))))]
                               (recur (assoc spell :duration [duration])
                                      :saving-throw
