@@ -1,5 +1,5 @@
-(ns a5e-5etools-converter.maneuvers
-  (:require [a5e-5etools-converter.util :as u]
+(ns fivee-tools-converter.maneuvers
+  (:require [fivee-tools-converter.util :as u]
             [clojure.string :as str]))
 
 (defn extract-maneuver-lines [^String file-name]
@@ -52,5 +52,5 @@
          (into manual-maneuvers))))
 
 (defn write-maneuvers! []
-  (u/->file "data/5et/generated/a5e/maneuvers.json" {:_meta (u/source-meta)
+  (u/->file "data/5et/generated/a5e/maneuvers.json" {:_meta (u/a5e-source-meta)
                                                      :spell (convert-maneuvers)}))

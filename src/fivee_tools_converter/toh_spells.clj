@@ -1,13 +1,11 @@
-(ns a5e-5etools-converter.spells
-  (:require [a5e-5etools-converter.util :as u]
-            [jsonista.core :as j]
-            [clojure.string :as str]
-            [clojure.set :as set])
-  (:import (java.io File)))
+(ns fivee-tools-converter.toh-spells
+  (:require [fivee-tools-converter.util :as u]
+            [clojure.string :as str]))
 
 (def spell-level-pred
-  (u/starts-with-pred "Cantrip (", "1st-level (", "2nd-level (", "3rd-level (", "4th-level (",
-                      "5th-level (", "6th-level (", "7th-level (", "8th-level (", "9th-level ("))
+  #(or
+     (re-matches #"(?i)(abjuration|conjuration|divination|enchantment|evocation|illusion|necromancy|psionic|transmutation) cantrip" %)
+     (re-matches #"(?i)(1st-level|2nd-level|3rd-level|4th-level|5th-level|6th-level|7th-level|8th-level|9th-level) (abjuration|conjuration|divination|enchantment|evocation|illusion|necromancy|psionic|transmutation)" %)))
 
 (def ->level {"Cantrip"   0
               "1st-level" 1
@@ -45,15 +43,17 @@
           "years"     "year"} unit unit)))
 
 (defn ->sanitised-list [s]
-  (->> (str/split s #",")
-       (map #(str/escape % {\space   ""
-                            \newline ""
-                            \,       ""
-                            \)       ""}))))
+  (if s
+    (->> (str/split s #",")
+         (map #(str/escape % {\space   ""
+                              \newline ""
+                              \,       ""
+                              \)       ""})))
+    []))
 
 (defn extract-spell-lines [^String file-name]
   (u/extract-lines file-name
-                   #(re-matches #"^(Chapter 10: Spellcasting|Adventurer’s Guide|[1-9][0-9]*)$" %)
+                   #(re-matches #"^(Chapter 6: Magic and Spells|[1-9][0-9]*)$" %)
                    spell-level-pred))
 
 (def raw-content->entries (comp u/lines->entries str/split-lines))
@@ -113,37 +113,31 @@
                                              :upTo   up-to?})
                       concentration? (assoc :concentration true))))))
 
-(defn extract-spell-sections [manual-data spell-lines]
+(defn extract-spell-sections [_ spell-lines]
   (let [spell-name (first spell-lines)
-        {:strs [entries entriesHigherLevel]} (get manual-data spell-name)
         spell (loop [spell {:name    spell-name
                             :page    497 ;spell page start, don't care about specifics
-                            :source  u/a5e-source-id
+                            :source  u/toh-source-id
                             :entries []}
                      section :level
                      unparsed-lines (rest spell-lines)]
                 (case section
-                  :level (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                                 (u/starts-with-pred "Classes: "))
-                               [level level-suffix] (str/split content #" \(" 2)
-                               [school types] (str/split level-suffix #";" 2)
+                  :level (let [
+                               _ (println spell-name)
+                               {:keys [content lines]} (merge-until-next-section unparsed-lines
+                                                                                 (u/starts-with-pred "Casting Time: "))
+                               [_ level-suffix :as level-data] (str/split content #" " 2)
+                               [level level-suffix] (cond-> level-data
+                                                            (str/starts-with? level-suffix "cantrip") (reverse))
+                               [_ school _ types] (re-matches #"^(?i)(abjuration|conjuration|divination|enchantment|evocation|illusion|necromancy|psionic|transmutation)( \()?(.)*$"
+                                                              level-suffix)
                                types (->sanitised-list types)]
                            (recur
                              (assoc spell :level (->level level)
                                           :subschools types
-                                          :school (->school school))
-                             :classes
+                                          :school (-> school (str/lower-case) (->school)))
+                             :casting-time
                              lines))
-                  :classes (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                                   (u/starts-with-pred "Casting Time: "))
-                                 classes (-> content
-                                             (subs (count "Classes: "))
-                                             (->sanitised-list))]
-                             (recur (assoc spell :classes {:fromClassList (map (fn [class] {:name   (str/capitalize class)
-                                                                                            :source u/phb-source-id})
-                                                                               classes)})
-                                    :casting-time
-                                    lines))
                   :casting-time (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
                                                                                         (u/starts-with-pred
                                                                                           "Range: "
@@ -184,47 +178,8 @@
                              (-> spell
                                  (assoc-in [:range :type] "point") ;inaccurate, don't care
                                  (assoc-in [:range :distance] distance))
-                             :target
+                             :components
                              lines))
-                  :target (if (str/starts-with? (first unparsed-lines) "Target: ")
-                            (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                                    (u/starts-with-pred "Area: "
-                                                                                                        "Components: "))
-                                  target (extract-pseudo-section-entries content "Target")]
-                              (recur
-                                (update spell :entries #(conj % target))
-                                :area lines))
-                            (recur spell :area unparsed-lines))
-                  :area (if (str/starts-with? (first unparsed-lines) "Area: ")
-                          (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                                  (u/starts-with-pred "Components: "))
-                                area (extract-pseudo-section-entries content "Area")
-                                area-words (-> area
-                                               (:entries)
-                                               (first)
-                                               (str/lower-case)
-                                               (str/replace #"\(|\)|\," "")
-                                               (str/trim)
-                                               (str/split #"\-| ")
-                                               (set))
-                                matched-words (set/intersection #{"cube" "hemisphere" "line" "cone" "square"
-                                                                  "circle" "sphere" "wall" "cylinder"}
-                                                                area-words)
-                                area-tags (map {"cube"       "C"
-                                                "hemisphere" "H"
-                                                "line"       "L"
-                                                "cone"       "N"
-                                                "square"     "Q"
-                                                "circle"     "R"
-                                                "sphere"     "S"
-                                                "wall"       "W"
-                                                "cylinder"   "Y"} matched-words)]
-                            (recur
-                              (-> spell
-                                  (update :entries #(conj % area))
-                                  (assoc :areaTags area-tags))
-                              :components lines))
-                          (recur spell :components unparsed-lines))
                   :components (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
                                                                                       (u/starts-with-pred "Duration: "))
                                     raw-components (-> content
@@ -245,8 +200,7 @@
                                   :duration
                                   lines))
                   :duration (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                                    (some-fn (u/starts-with-pred "Saving Throw: ")
-                                                                                             #(re-matches #"^[A-Z].*" %)))
+                                                                                    #(re-matches #"^[A-Z].*" %))
                                   duration-text (-> content
                                                     (subs (count "Duration: "))
                                                     (str/escape {\newline \space})
@@ -255,22 +209,8 @@
                                                    [duration-text]
                                                    (str/split duration-text #" or "))]
                               (recur (assoc spell :duration (map extract-duration duration-texts))
-                                     :saving-throw
+                                     :entries
                                      lines))
-                  :saving-throw (if (str/starts-with? (first unparsed-lines) "Saving Throw: ")
-                                  (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
-                                                                                          #(re-matches #"^[A-Z].*" %))
-                                        saving-throw (extract-pseudo-section-entries content "Saving Throw")
-                                        types (->> (str/split content #"\s")
-                                                   (map #{"strength" "dexterity" "constitution" "intelligence" "wisdom" "charisma"})
-                                                   (filter identity)
-                                                   (distinct))]
-                                    (recur
-                                      (-> spell
-                                          (update :entries #(conj % saving-throw))
-                                          (assoc :savingThrow types))
-                                      :entries lines))
-                                  (recur spell :entries unparsed-lines))
                   :entries (let [{:keys [content lines]} (merge-until-next-section unparsed-lines
                                                                                    (u/starts-with-pred "Cast at Higher Levels. "
                                                                                                        "Rare: "))]
@@ -278,13 +218,14 @@
                                (update spell :entries #(into % (raw-content->entries content)))
                                :higher-levels
                                lines))
-                  :higher-levels (if (and
-                                       (seq unparsed-lines)
-                                       (str/starts-with? (first unparsed-lines)
-                                                         "Cast at Higher Levels. "))
+                  :higher-levels (if-let [higher-levels-prefix (-> (and
+                                                                     (seq unparsed-lines)
+                                                                     (re-matches #"^(At Higher Levels.\s?).*$"
+                                                                                 (first unparsed-lines)))
+                                                                   (second))]
                                    (let [{:keys [content lines]} (merge-until-next-section unparsed-lines (u/starts-with-pred "Rare: "))
                                          entries (-> content
-                                                     (subs (count "Cast at Higher Levels. "))
+                                                     (subs higher-levels-prefix)
                                                      (raw-content->entries))]
                                      (recur
                                        (assoc spell :entriesHigherLevel
@@ -304,13 +245,14 @@
                                                                :entries entries}))
                               :rare lines))
                           spell)))]
-    (cond-> spell
-            entries (assoc :entries entries)
-            entriesHigherLevel (assoc :entriesHigherLevel entriesHigherLevel))))
+    spell
+    #_(cond-> spell
+              entries (assoc :entries entries)
+              entriesHigherLevel (assoc :entriesHigherLevel entriesHigherLevel))))
 
 (defn convert-spells []
-  (let [manual-data (u/load-json "data/a5e/spells/manually-adjusted-spells.json")
-        spell-lines (extract-spell-lines "data/a5e/spells/spells-touched-up.txt")]
+  (let [manual-data (comment (u/load-json "data/kobold/spells/manually-adjusted-spells.json"))
+        spell-lines (extract-spell-lines "data/kobold/spells/spells-touched-up.txt")]
     (map #(try
             (extract-spell-sections manual-data %)
             (catch Exception e
@@ -318,19 +260,5 @@
          spell-lines)))
 
 (defn write-spells! []
-  (u/->file "data/5et/generated/a5e/spells.json" {:_meta (u/source-meta)
-                                                  :spell (convert-spells)}))
-
-(defn save-manual-changes! []
-  (let [manual-spells #{"Animate Objects" "Augury" "Bestow Curse" "Calm Emotions" "Commune with Nature"
-                        "Conjure Animals" "Control Weather" "Creation" "Divine Word" "Druidcraft" "Find Steed"
-                        "Greater Restoration" "Guards and Wards" "Mage Hand" "Prestidigitation"
-                        "Private Sanctum" "Reincarnate" "Scrying" "Teleport" "Thaumaturgy"
-                        "Wish" "Writhing Transformation"}]
-    (->> (j/read-value (File. "data/5et/spells/spells-a5e.json")
-                       j/keyword-keys-object-mapper)
-         (:spell)
-         (filter (comp manual-spells :name))
-         (group-by :name)
-         (into {} (map (fn [[k v]] [k (-> v first (select-keys [:entries :entriesHigherLevel]))])))
-         (u/->file "data/a5e/spells/manually-adjusted-spells.json"))))
+  (u/->file "data/5et/generated/kobold/spells.json" {:_meta (u/toh-source-meta)
+                                                     :spell (convert-spells)}))

@@ -1,4 +1,4 @@
-(ns a5e-5etools-converter.util
+(ns fivee-tools-converter.util
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [jsonista.core :as j])
@@ -7,6 +7,7 @@
            (java.io File)))
 
 (def a5e-source-id "LevelUpAdventurersGuideA5E")
+(def toh-source-id "TomeOfHeroes")
 (def phb-source-id "PHB")
 
 (defn starts-with-pred [& prefixes]
@@ -94,13 +95,25 @@
           (str/includes? lines "STR DEX") (conj "<<<ADD STAT BLOCK MANUALLY>>>")
           (str/includes? lines "•") (conj "<<<FIX LIST MANUALLY>>>")))
 
-(defn source-meta []
+(defn a5e-source-meta []
   (let [now (->> (Date.) (inst-ms) (.toSeconds TimeUnit/MILLISECONDS))]
     {:sources          [{:json         a5e-source-id
                          :abbreviation "A5E"
                          :full         "Level Up: Adventurers Guide (A5E)"
                          :url          "https://www.levelup5e.com/"
                          :authors      ["Level Up"]
+                         :convertedBy  ["TODO DMs"]
+                         :version      "0.0.1"}]
+     :dateAdded        now
+     :dateLastModified now}))
+
+(defn toh-source-meta []
+  (let [now (->> (Date.) (inst-ms) (.toSeconds TimeUnit/MILLISECONDS))]
+    {:sources          [{:json         a5e-source-id
+                         :abbreviation "TOH"
+                         :full         "Tome of Heroes"
+                         :url          "https://koboldpress.com/kpstore/product/tome-of-heroes-for-5th-edition/"
+                         :authors      ["Kobold Press"]
                          :convertedBy  ["TODO DMs"]
                          :version      "0.0.1"}]
      :dateAdded        now
